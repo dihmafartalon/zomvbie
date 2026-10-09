@@ -1,0 +1,165 @@
+#!/usr/bin/env node
+/**
+ * Downloads every asset in manifest.mjs into .asset-cache/ (gitignored), then
+ * writes optimized, web-ready copies into public/assets/ and regenerates
+ * ASSETS.md. Safe to re-run: downloads are cached and skipped.
+ *
+ *   npm run assets            # build everything
+ *   npm run assets -- covered # only ids containing "covered"
+ */
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { NodeIO } from '@gltf-transform/core';
+import { ALL_EXTENSIONS } from '@gltf-transform/extensions';
+import { dedup, meshopt, prune, simplify, textureCompress, weld } from '@gltf-transform/functions';
+import { MeshoptEncoder, MeshoptSimplifier } from 'meshoptimizer';
+import sharp from 'sharp';
+import { licenses, polyhavenHdris, polyhavenModels, polyhavenTextures } from './manifest.mjs';
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+const CACHE = path.join(ROOT, '.asset-cache');
+const OUT = path.join(ROOT, 'public/assets');
+const API = 'https://api.polyhaven.com';
+const filter = process.argv[2] ?? '';
+
+async function json(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`${res.status} ${url}`);
+  return res.json();
+}
+
+async function download(url, dest) {
+  if (fs.existsSync(dest)) return;
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`${res.status} ${url}`);
+  fs.writeFileSync(dest, Buffer.from(await res.arrayBuffer()));
+}
+
+function kb(file) {
+  return `${(fs.statSync(file).size / 1024).toFixed(0)} KB`;
+}
+
+async function buildModel(entry, io) {
+  const files = await json(`${API}/files/${entry.id}`);
+  const gltf = files.gltf['1k'].gltf;
+  const dir = path.join(CACHE, 'models', entry.id);
+  const main = path.join(dir, `${entry.id}.gltf`);
+  await download(gltf.url, main);
+  for (const [rel, inc] of Object.entries(gltf.include ?? {})) await download(inc.url, path.join(dir, rel));
+
+  const doc = await io.read(main);
+  const before = countTriangles(doc);
+  const transforms = [dedup(), prune(), weld()];
+  if (entry.simplify < 1) transforms.push(simplify({ simplifier: MeshoptSimplifier, ratio: entry.simplify, error: 0.01 }));
+  transforms.push(
+    textureCompress({ encoder: sharp, targetFormat: 'webp', resize: [entry.texSize, entry.texSize], quality: 82 }),
+    meshopt({ encoder: MeshoptEncoder, level: 'medium' }),
+  );
+  await doc.transform(...transforms);
+  const out = path.join(OUT, 'models', `${entry.id}.glb`);
+  fs.mkdirSync(path.dirname(out), { recursive: true });
+  await io.write(out, doc);
+  console.log(`model   ${entry.id.padEnd(28)} ${String(before).padStart(7)} -> ${String(countTriangles(doc)).padStart(6)} tris  ${kb(out)}`);
+}
+
+function countTriangles(doc) {
+  let tris = 0;
+  for (const mesh of doc.getRoot().listMeshes()) {
+    for (const prim of mesh.listPrimitives()) {
+      const idx = prim.getIndices();
+      tris += (idx ? idx.getCount() : prim.getAttribute('POSITION').getCount()) / 3;
+    }
+  }
+  return Math.round(tris);
+}
+
+async function buildTexture(entry) {
+  const files = await json(`${API}/files/${entry.id}`);
+  const maps = { diff: files.Diffuse, nor: files.nor_gl, arm: files.arm };
+  const outDir = path.join(OUT, 'textures', entry.id);
+  fs.mkdirSync(outDir, { recursive: true });
+  const sizes = [];
+  for (const [name, set] of Object.entries(maps)) {
+    const src = set['1k'].jpg.url;
+    const cached = path.join(CACHE, 'textures', entry.id, path.basename(src));
+    await download(src, cached);
+    const out = path.join(outDir, `${name}.webp`);
+    await sharp(cached)
+      .resize(entry.texSize, entry.texSize, { fit: 'inside' })
+      .webp({ quality: name === 'nor' ? 90 : 82 })
+      .toFile(out);
+    sizes.push(`${name} ${kb(out)}`);
+  }
+  console.log(`texture ${entry.id.padEnd(28)} ${sizes.join(', ')}`);
+}
+
+async function buildHdri(entry) {
+  const files = await json(`${API}/files/${entry.id}`);
+  const out = path.join(OUT, 'hdri', `${entry.id}_${entry.res}.hdr`);
+  const cached = path.join(CACHE, 'hdri', path.basename(out));
+  await download(files.hdri[entry.res].hdr.url, cached);
+  fs.mkdirSync(path.dirname(out), { recursive: true });
+  fs.copyFileSync(cached, out);
+  console.log(`hdri    ${entry.id.padEnd(28)} ${kb(out)}`);
+}
+
+async function writeAttribution() {
+  const rows = [];
+  const all = [
+    ...polyhavenModels.map((e) => ({ ...e, kind: 'Model' })),
+    ...polyhavenTextures.map((e) => ({ ...e, kind: 'PBR texture' })),
+    ...polyhavenHdris.map((e) => ({ ...e, kind: 'HDRI' })),
+  ];
+  for (const e of all) {
+    const info = await json(`${API}/info/${e.id}`);
+    rows.push(`| ${info.name} | ${e.kind} | ${Object.keys(info.authors ?? {}).join(', ')} | [Poly Haven](https://polyhaven.com/a/${e.id}) | [${licenses.polyhaven.name}](${licenses.polyhaven.url}) | ${e.use} |`);
+  }
+  const md = `# Third-party assets
+
+Generated by \`npm run assets\` from \`tools/assets/manifest.mjs\`. Do not edit by hand.
+
+Every third-party file shipped under \`public/assets/\` is listed here. CC0
+assets carry no attribution requirement; authors are credited anyway.
+Shipped copies are optimized derivatives (mesh simplification, WebP
+textures, meshopt compression) of the linked originals.
+
+| Asset | Type | Author(s) | Source | License | Used for |
+| --- | --- | --- | --- | --- | --- |
+${rows.join('\n')}
+
+## Original content
+
+All code, procedural geometry (canopy, pumps, store shell, signage), canvas
+textures and synthesized audio in this repository are original work for
+DEAD SIGNAL.
+`;
+  fs.writeFileSync(path.join(ROOT, 'ASSETS.md'), md);
+  console.log('wrote ASSETS.md');
+}
+
+async function main() {
+  await MeshoptEncoder.ready;
+  await MeshoptSimplifier.ready;
+  const io = new NodeIO(fetch).registerExtensions(ALL_EXTENSIONS).registerDependencies({ 'meshopt.encoder': MeshoptEncoder });
+  const match = (e) => e.id.includes(filter);
+  const failures = [];
+  const run = async (label, fn, e) => {
+    try {
+      await fn(e);
+    } catch (err) {
+      failures.push(`${label} ${e.id}: ${err.message}`);
+    }
+  };
+  for (const e of polyhavenTextures.filter(match)) await run('texture', buildTexture, e);
+  for (const e of polyhavenHdris.filter(match)) await run('hdri', buildHdri, e);
+  for (const e of polyhavenModels.filter(match)) await run('model', (x) => buildModel(x, io), e);
+  if (!filter) await writeAttribution();
+  if (failures.length) {
+    console.error(`\n${failures.length} asset(s) failed:\n${failures.join('\n')}`);
+    process.exit(1);
+  }
+}
+
+await main();

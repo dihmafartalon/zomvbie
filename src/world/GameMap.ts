@@ -25,6 +25,8 @@ export interface GameMap {
   readonly wallBuys: readonly WallBuySpot[];
   /** Slow orbit shown behind the main menu. */
   readonly menuCamera: { readonly target: Vector3; readonly radius: number; readonly height: number };
+  /** Strength of image-based (environment map) lighting, if the map wants it. */
+  readonly environmentIntensity?: number;
   update(dt: number): void;
   setShadowsEnabled(enabled: boolean): void;
 }

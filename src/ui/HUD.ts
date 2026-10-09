@@ -98,8 +98,9 @@ export class HUD {
     this.messageTimer = seconds;
   }
 
-  setFps(fps: number | null): void {
-    const text = fps === null ? '' : `${Math.round(fps)} FPS`;
+  /** FPS, draw calls and triangles; null hides the readout. */
+  setPerf(perf: { fps: number; calls: number; triangles: number } | null): void {
+    const text = perf === null ? '' : `${Math.round(perf.fps)} FPS · ${perf.calls} draws · ${(perf.triangles / 1000).toFixed(0)}k tris`;
     if (this.changed('fps', text)) this.fps.textContent = text;
   }
 

@@ -1,15 +1,15 @@
 import {
-  ACESFilmicToneMapping,
   type Object3D,
-  PCFShadowMap,
+  PMREMGenerator,
   PerspectiveCamera,
   PointLight,
   Raycaster,
   Scene,
   Timer,
   Vector3,
-  WebGLRenderer,
+  type WebGLRenderer,
 } from 'three';
+import type { AssetLibrary } from '../assets/AssetLibrary';
 import { PLAYER, POINTS, ZOMBIE } from '../config/balance';
 import { Effects } from '../effects/Effects';
 import type { Zombie, ZombieHitData } from '../enemies/Zombie';
@@ -24,7 +24,7 @@ import { getWeapon, STARTING_WEAPON } from '../weapons/WeaponDefs';
 import { ViewModel } from '../weapons/ViewModel';
 import { type RayHit, WeaponSystem } from '../weapons/WeaponSystem';
 import type { GameMap, WallBuySpot } from '../world/GameMap';
-import { GasStationMap } from '../world/GasStationMap';
+import { LastStopFuelMap } from '../world/lastStop/LastStopFuelMap';
 import { AudioSystem } from './AudioSystem';
 import { type FrameInput, Input } from './Input';
 import { loadSettings, saveSettings, type Settings } from './Settings';
@@ -46,7 +46,6 @@ export function detectTouchDevice(): boolean {
  * talk through the callbacks set up here.
  */
 export class Game {
-  private readonly renderer: WebGLRenderer;
   private readonly scene = new Scene();
   /** First-person weapon layer, drawn after the world with a cleared depth buffer. */
   private readonly viewScene = new Scene();
@@ -76,25 +75,31 @@ export class Game {
   private fpsSmoothed = 60;
   private readonly stats = { kills: 0, headshots: 0, pointsEarned: 0 };
 
-  constructor(container: HTMLElement) {
+  constructor(
+    private readonly renderer: WebGLRenderer,
+    assets: AssetLibrary,
+  ) {
     document.body.classList.toggle('touch', this.isTouch);
     this.settings = loadSettings(this.isTouch);
 
-    this.renderer = new WebGLRenderer({ antialias: !this.isTouch, powerPreference: 'high-performance' });
-    this.renderer.autoClear = false;
-    this.renderer.toneMapping = ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.05;
-    this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = PCFShadowMap;
-    container.appendChild(this.renderer.domElement);
 
-    this.camera = new PerspectiveCamera(this.settings.fov, 1, 0.05, 260);
+    this.camera = new PerspectiveCamera(this.settings.fov, 1, 0.05, 320);
     this.scene.add(this.camera);
 
     this.input = new Input(this.renderer.domElement);
     this.touch = this.isTouch ? new TouchControls(this.input) : null;
 
-    this.map = new GasStationMap(this.scene);
+    this.map = new LastStopFuelMap(this.scene, assets);
+    if (assets.environment) {
+      // Image-based lighting from the night HDRI, shared with the weapon view.
+      const pmrem = new PMREMGenerator(renderer);
+      const env = pmrem.fromEquirectangular(assets.environment).texture;
+      pmrem.dispose();
+      this.scene.environment = env;
+      this.scene.environmentIntensity = this.map.environmentIntensity ?? 0.3;
+      this.viewScene.environment = env;
+      this.viewScene.environmentIntensity = 0.6;
+    }
     this.player = new Player(this.camera);
     this.effects = new Effects(this.scene);
 
@@ -269,7 +274,8 @@ export class Game {
     this.map.update(dt);
     this.effects.update(dt);
     this.hud.update(dt);
-    this.hud.setFps(this.settings.showFps ? this.fpsSmoothed : null);
+    const info = this.renderer.info.render;
+    this.hud.setPerf(this.settings.showFps ? { fps: this.fpsSmoothed, calls: info.calls, triangles: info.triangles } : null);
     this.render();
   };
 
@@ -324,6 +330,8 @@ export class Game {
   }
 
   private render(): void {
+    // info.autoReset is off so the readout covers both render passes.
+    this.renderer.info.reset();
     this.renderer.clear();
     this.renderer.render(this.scene, this.camera);
     if (this.state !== 'menu') {
