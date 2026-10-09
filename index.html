@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="theme-color" content="#050608" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <title>DEAD SIGNAL</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23050608'/%3E%3Ctext x='16' y='24' font-size='22' font-family='Impact,sans-serif' text-anchor='middle' fill='%23ff3b2f'%3EDS%3C/text%3E%3C/svg%3E" />
+  </head>
+  <body>
+    <div id="game-root"></div>
+
+    <!-- In-game HUD -->
+    <div id="hud" class="hidden">
+      <div id="damage-vignette"></div>
+      <div id="crosshair"><span class="ch-t"></span><span class="ch-b"></span><span class="ch-l"></span><span class="ch-r"></span></div>
+      <div id="hitmarker"></div>
+      <div id="center-message"></div>
+      <div id="prompt" class="hidden"></div>
+      <div id="hud-bottom-left">
+        <div id="health"><div id="health-fill"></div></div>
+        <div id="round"></div>
+      </div>
+      <div id="hud-bottom-right">
+        <div id="points-wrap"><div id="point-popups"></div><div id="points">500</div></div>
+        <div id="weapon-name"></div>
+        <div id="ammo"><span id="ammo-mag">0</span><span class="sep">/</span><span id="ammo-reserve">0</span></div>
+        <div id="reload-hint"></div>
+      </div>
+      <div id="fps"></div>
+    </div>
+
+    <!-- Touch controls (shown only on touch devices while playing) -->
+    <div id="touch-ui" class="hidden">
+      <div id="touch-move-zone"></div>
+      <div id="touch-look-zone"></div>
+      <div id="joystick-base"><div id="joystick-knob"></div></div>
+      <button class="touch-btn" id="tb-fire" data-action="fire" data-look>FIRE</button>
+      <button class="touch-btn" id="tb-aim" data-action="aim">AIM</button>
+      <button class="touch-btn" id="tb-reload" data-action="reload">RELOAD</button>
+      <button class="touch-btn" id="tb-jump" data-action="jump">JUMP</button>
+      <button class="touch-btn" id="tb-swap" data-action="swap">SWAP</button>
+      <button class="touch-btn" id="tb-use" data-action="interact">USE</button>
+      <button class="touch-btn" id="tb-pause" data-action="pause" aria-label="Pause">❚❚</button>
+    </div>
+
+    <!-- Menus -->
+    <div id="menus">
+      <section id="menu-main" class="menu">
+        <h1 class="title">DEAD <span>SIGNAL</span></h1>
+        <p class="subtitle">Map: Last Stop Fuel</p>
+        <div class="menu-buttons">
+          <button id="btn-play" class="primary">Play</button>
+          <button id="btn-settings-main">Settings</button>
+          <button id="btn-controls">Controls</button>
+        </div>
+        <div id="controls-panel" class="panel hidden">
+          <div class="controls-grid">
+            <div><h3>Keyboard &amp; Mouse</h3>
+              <ul>
+                <li><kbd>WASD</kbd> Move</li>
+                <li><kbd>Mouse</kbd> Look</li>
+                <li><kbd>LMB</kbd> Fire · <kbd>RMB</kbd> Aim</li>
+                <li><kbd>R</kbd> Reload</li>
+                <li><kbd>Shift</kbd> Sprint · <kbd>Space</kbd> Jump</li>
+                <li><kbd>F</kbd> Buy weapon / ammo</li>
+                <li><kbd>1</kbd> <kbd>2</kbd> / <kbd>Q</kbd> / <kbd>Wheel</kbd> Switch weapon</li>
+                <li><kbd>Esc</kbd> / <kbd>P</kbd> Pause</li>
+              </ul>
+            </div>
+            <div><h3>Touch</h3>
+              <ul>
+                <li>Left side: move stick (push fully forward to sprint)</li>
+                <li>Right side: drag to look</li>
+                <li>FIRE: hold to shoot, drag to aim while firing</li>
+                <li>AIM toggles aim-down-sights</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+        <p class="footer">v0.1 prototype · Survive as many rounds as you can.</p>
+      </section>
+
+      <section id="menu-pause" class="menu hidden">
+        <h2>PAUSED</h2>
+        <div class="menu-buttons">
+          <button id="btn-resume" class="primary">Resume</button>
+          <button id="btn-settings-pause">Settings</button>
+          <button id="btn-restart">Restart</button>
+          <button id="btn-quit">Quit to Menu</button>
+        </div>
+        <p id="pause-hint" class="hint"></p>
+      </section>
+
+      <section id="menu-settings" class="menu hidden">
+        <h2>SETTINGS</h2>
+        <form class="panel settings" onsubmit="return false">
+          <label for="set-mouse">Mouse sensitivity</label>
+          <input id="set-mouse" type="range" min="0.1" max="3" step="0.05" />
+          <output id="set-mouse-value"></output>
+
+          <label for="set-touch">Touch sensitivity</label>
+          <input id="set-touch" type="range" min="0.2" max="3" step="0.05" />
+          <output id="set-touch-value"></output>
+
+          <label for="set-fov">Field of view</label>
+          <input id="set-fov" type="range" min="60" max="100" step="1" />
+          <output id="set-fov-value"></output>
+
+          <label for="set-volume">Master volume</label>
+          <input id="set-volume" type="range" min="0" max="100" step="1" />
+          <output id="set-volume-value"></output>
+
+          <label for="set-quality">Graphics quality</label>
+          <select id="set-quality">
+            <option value="high">High (shadows)</option>
+            <option value="low">Low (performance)</option>
+          </select>
+          <span></span>
+
+          <label for="set-invert">Invert Y axis</label>
+          <input id="set-invert" type="checkbox" />
+          <span></span>
+
+          <label for="set-fps">Show FPS</label>
+          <input id="set-fps" type="checkbox" />
+          <span></span>
+        </form>
+        <div class="menu-buttons">
+          <button id="btn-settings-back" class="primary">Back</button>
+        </div>
+      </section>
+
+      <section id="menu-gameover" class="menu hidden">
+        <h2 class="dead">YOU DIED</h2>
+        <p id="go-rounds" class="subtitle"></p>
+        <div class="panel stats">
+          <div><span>Kills</span><strong id="go-kills">0</strong></div>
+          <div><span>Headshots</span><strong id="go-headshots">0</strong></div>
+          <div><span>Points earned</span><strong id="go-points">0</strong></div>
+        </div>
+        <div class="menu-buttons">
+          <button id="btn-again" class="primary">Play Again</button>
+          <button id="btn-gameover-menu">Main Menu</button>
+        </div>
+      </section>
+    </div>
+
+    <div id="rotate-hint">Rotate your device to landscape</div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
